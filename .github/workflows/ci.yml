@@ -26,7 +26,7 @@ jobs:
       # the file. Reading them needs no image library, so this lane installs
       # nothing -- and a blank render is caught by size, since a failed Quick
       # Look thumbnail is a few hundred bytes where a real mark is over 100 KB.
-      - name: Every avatar is 400x400 and not blank
+      - name: Every avatar is 512x512 and not blank
         run: |
           python3 - <<'PY'
           import glob, struct, sys
@@ -41,8 +41,11 @@ jobs:
                   continue
               w, h = struct.unpack(">II", b[16:24])
               note = f"{p}: {w}x{h}, {len(b)} bytes"
-              if (w, h) != (400, 400):
-                  bad.append(note + " -- must be 400x400")
+              if (w, h) != (512, 512):
+                  # 512 is the family's avatar size, and what the fleet's own
+                  # generator emits. The 400 this once asserted came from the
+                  # day these assets were staged by hand.
+                  bad.append(note + " -- must be 512x512")
               elif len(b) < 10000:
                   bad.append(note + " -- too small to hold a mark; a blank render looks like this")
               else:
@@ -50,6 +53,42 @@ jobs:
           for line in bad:
               print(f"::error::{line}")
           sys.exit(1 if bad else 0)
+          PY
+
+      # ⛔ The reason this repository existed for a week without most of itself:
+      # the family kit is svg in three variants, png 16 to 1024 in three
+      # variants, jpg, ico, icns, an avatar and a social banner -- and only
+      # three of those were here. A check that counts is cheaper than
+      # remembering.
+      - name: Every subject has the whole family matrix
+        run: |
+          python3 - <<'PY'
+          import glob, os, sys
+          subjects = sorted(os.path.basename(p)[:-4] for p in glob.glob("svg/color/*.svg"))
+          if not subjects:
+              sys.exit("::error::no colour SVG at all")
+          sizes = [16, 32, 48, 64, 128, 256, 512, 1024]
+          missing = []
+          for sid in subjects:
+              for v in ("color", "white", "black"):
+                  if not os.path.exists(f"svg/{v}/{sid}.svg"):
+                      missing.append(f"svg/{v}/{sid}.svg")
+                  for s in sizes:
+                      if not os.path.exists(f"png/{v}/{s}/{sid}.png"):
+                          missing.append(f"png/{v}/{s}/{sid}.png")
+              for s in sizes:
+                  if not os.path.exists(f"jpg/{s}/{sid}.jpg"):
+                      missing.append(f"jpg/{s}/{sid}.jpg")
+              for f in (f"avatar/{sid}.png", f"social/{sid}.png"):
+                  if not os.path.exists(f):
+                      missing.append(f)
+          for f in ("ico/go-authn.ico", "icns/go-authn.icns"):
+              if not os.path.exists(f):
+                  missing.append(f)
+          for f in missing:
+              print(f"::error::missing {f}")
+          print(f"{len(subjects)} subjects, {len(missing)} missing")
+          sys.exit(1 if missing else 0)
           PY
 
       - name: Every per-repo SVG has an avatar, and the other way round
