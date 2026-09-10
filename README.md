@@ -41,3 +41,16 @@ sips -g pixelWidth -g pixelHeight avatar/go-authn-<name>.png
 check the result rather than to resize it. Check it: a Quick Look thumbnail that
 failed is still a file, and a blank one is a few hundred bytes where these are
 about 133 KB.
+
+## What CI checks
+
+The marks are shown on somebody else's page — the profile README at 36 pixels,
+the landing page at 88 — where a blank or mis-sized file reads as a broken
+image and nothing here would say so. So three things are checked on every pull
+request, with no image library installed: every avatar is 400×400 and large
+enough not to be a failed thumbnail (dimensions come from the PNG's IHDR chunk,
+which is the first 24 bytes); every per-repo SVG has an avatar and every avatar
+an SVG; and every per-repo SVG is `go-authn-mfa.svg` with the name changed and
+nothing else. The last one is the family rule, which was until now kept by
+remembering it. `font-size` is exempt, because a long name is allowed to need a
+smaller one.
