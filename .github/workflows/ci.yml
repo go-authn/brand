@@ -28,32 +28,29 @@ jobs:
       # Look thumbnail is a few hundred bytes where a real mark is over 100 KB.
       - name: Every avatar is 512x512 and not blank
         run: |
-          python3 - <<'PY'
-          import glob, struct, sys
-          bad = []
-          files = sorted(glob.glob("avatar/*.png"))
-          if not files:
-              sys.exit("::error::no avatars at all")
-          for p in files:
-              b = open(p, "rb").read()
-              if b[:8] != b"\x89PNG\r\n\x1a\n":
-                  bad.append(f"{p}: not a PNG")
-                  continue
-              w, h = struct.unpack(">II", b[16:24])
-              note = f"{p}: {w}x{h}, {len(b)} bytes"
-              if (w, h) != (512, 512):
-                  # 512 is the family's avatar size, and what the fleet's own
-                  # generator emits. The 400 this once asserted came from the
-                  # day these assets were staged by hand.
-                  bad.append(note + " -- must be 512x512")
-              elif len(b) < 10000:
-                  bad.append(note + " -- too small to hold a mark; a blank render looks like this")
-              else:
-                  print(note)
-          for line in bad:
-              print(f"::error::{line}")
-          sys.exit(1 if bad else 0)
-          PY
+          set -euo pipefail
+          shopt -s nullglob
+          files=(avatar/*.png)
+          if [ ${#files[@]} -eq 0 ]; then echo "::error::no avatars at all"; exit 1; fi
+          bad=0
+          for p in "${files[@]}"; do
+            # The IHDR chunk is the first 24 bytes. The sizes are read a BYTE at a
+            # time and combined here: od --endian is GNU-only, so a check
+            # written with it cannot be run on the machine it is written on.
+            read -r a b c d e f g h8 < <(od -An -tu1 -j16 -N8 "$p" | tr -s ' ' | sed 's/^ //')
+            w=$(( a * 16777216 + b * 65536 + c * 256 + d ))
+            h=$(( e * 16777216 + f * 65536 + g * 256 + h8 ))
+            bytes=$(wc -c < "$p" | tr -d ' ')
+            note="$p: ${w}x${h}, ${bytes} bytes"
+            if [ "$w" != 512 ] || [ "$h" != 512 ]; then
+              echo "::error::$note -- must be 512x512"; bad=1
+            elif [ "$bytes" -lt 10000 ]; then
+              echo "::error::$note -- too small to hold a mark; a blank render looks like this"; bad=1
+            else
+              echo "$note"
+            fi
+          done
+          exit $bad
 
       # ⛔ The reason this repository existed for a week without most of itself:
       # the family kit is svg in three variants, png 16 to 1024 in three
@@ -62,34 +59,27 @@ jobs:
       # remembering.
       - name: Every subject has the whole family matrix
         run: |
-          python3 - <<'PY'
-          import glob, os, sys
-          subjects = sorted(os.path.basename(p)[:-4] for p in glob.glob("svg/color/*.svg"))
-          if not subjects:
-              sys.exit("::error::no colour SVG at all")
-          sizes = [16, 32, 48, 64, 128, 256, 512, 1024]
-          missing = []
-          for sid in subjects:
-              for v in ("color", "white", "black"):
-                  if not os.path.exists(f"svg/{v}/{sid}.svg"):
-                      missing.append(f"svg/{v}/{sid}.svg")
-                  for s in sizes:
-                      if not os.path.exists(f"png/{v}/{s}/{sid}.png"):
-                          missing.append(f"png/{v}/{s}/{sid}.png")
-              for s in sizes:
-                  if not os.path.exists(f"jpg/{s}/{sid}.jpg"):
-                      missing.append(f"jpg/{s}/{sid}.jpg")
-              for f in (f"avatar/{sid}.png", f"social/{sid}.png"):
-                  if not os.path.exists(f):
-                      missing.append(f)
-          for f in ("ico/go-authn.ico", "icns/go-authn.icns"):
-              if not os.path.exists(f):
-                  missing.append(f)
-          for f in missing:
-              print(f"::error::missing {f}")
-          print(f"{len(subjects)} subjects, {len(missing)} missing")
-          sys.exit(1 if missing else 0)
-          PY
+          set -euo pipefail
+          shopt -s nullglob
+          subjects=$(ls svg/color/*.svg 2>/dev/null | sed 's|.*/||;s|\.svg$||' | sort)
+          if [ -z "$subjects" ]; then echo "::error::no colour SVG at all"; exit 1; fi
+          missing=0
+          for sid in $subjects; do
+            for v in color white black; do
+              [ -f "svg/$v/$sid.svg" ] || { echo "::error::missing svg/$v/$sid.svg"; missing=1; }
+              for s in 16 32 48 64 128 256 512 1024; do
+                [ -f "png/$v/$s/$sid.png" ] || { echo "::error::missing png/$v/$s/$sid.png"; missing=1; }
+              done
+            done
+            for s in 16 32 48 64 128 256 512 1024; do
+              [ -f "jpg/$s/$sid.jpg" ] || { echo "::error::missing jpg/$s/$sid.jpg"; missing=1; }
+            done
+            for f in "ico/$sid.ico" "icns/$sid.icns" "avatar/$sid.png" "social/$sid.png"; do
+              [ -f "$f" ] || { echo "::error::missing $f"; missing=1; }
+            done
+            [ "$missing" = 0 ] && echo "$sid: the whole matrix"
+          done
+          exit $missing
 
       - name: Every per-repo SVG has an avatar, and the other way round
         run: |
@@ -106,24 +96,22 @@ jobs:
       # is allowed to need a smaller one.
       - name: Every per-repo mark is the org glyph declined, not a new drawing
         run: |
-          python3 - <<'PY'
-          import glob, os, re, sys
-          def norm(path):
-              s = open(path).read()
-              name = os.path.basename(path)[len("go-authn-"):-len(".svg")]
-              s = s.replace(f'aria-label="{name}"', 'aria-label="NAME"')
-              s = s.replace(f'>{name}</text>', '>NAME</text>')
-              return re.sub(r'font-size="\d+"', 'font-size="N"', s)
-          ref = "svg/color/go-authn-mfa.svg"
-          want = norm(ref)
-          bad = False
-          for p in sorted(glob.glob("svg/color/go-authn-*.svg")):
-              if p == ref:
-                  continue
-              if norm(p) == want:
-                  print(f"{p}: declined from {ref}")
-              else:
-                  print(f"::error::{p} is not {ref} with the name changed")
-                  bad = True
-          sys.exit(1 if bad else 0)
-          PY
+          set -euo pipefail
+          # The name is normalised out of the aria-label and the plate, and
+          # font-size with it: a long name is allowed to need a smaller one.
+          norm() {
+            local n; n=$(basename "$1"); n=${n#go-authn-}; n=${n%.svg}
+            sed "s/aria-label=\"$n\"/aria-label=\"NAME\"/; s|>$n</text>|>NAME</text>|; s/font-size=\"[0-9]*\"/font-size=\"N\"/" "$1"
+          }
+          ref=svg/color/go-authn-mfa.svg
+          bad=0
+          for p in svg/color/go-authn-*.svg; do
+            [ "$p" = "$ref" ] && continue
+            if diff -q <(norm "$ref") <(norm "$p") >/dev/null; then
+              echo "$p: declined from $ref"
+            else
+              echo "::error::$p is not $ref with the name changed"
+              bad=1
+            fi
+          done
+          exit $bad
