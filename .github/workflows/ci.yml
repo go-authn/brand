@@ -20,7 +20,7 @@ jobs:
     name: the marks are what the README says they are
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # PNG dimensions come from the IHDR chunk, which is the first 24 bytes of
       # the file. Reading them needs no image library, so this lane installs
